@@ -53,7 +53,17 @@ class FileBrowserModel implements IDisposable {
     this.manager = options.manager;
     this._driveName = options.driveName || '';
     let rootPath = this._driveName ? this._driveName + ':' : '';
-    this._model = { path: rootPath, name: '/', type: 'directory' };
+    this._model = {
+      path: rootPath,
+      name: PathExt.basename(rootPath),
+      type: 'directory',
+      content: undefined,
+      writable: false,
+      created: 'unknown',
+      last_modified: 'unknown',
+      mimetype: 'text/plain',
+      format: 'text'
+    };
     this._state = options.state || null;
 
     const { services } = options.manager;
@@ -115,17 +125,17 @@ class FileBrowserModel implements IDisposable {
    * Get whether the model is disposed.
    */
   get isDisposed(): boolean {
-    return this._model === null;
+    return this._isDisposed;
   }
 
   /**
    * Dispose of the resources held by the model.
    */
   dispose(): void {
-    if (this._model === null) {
+    if (this.isDisposed) {
       return;
     }
-    this._model = null;
+    this._isDisposed = true;
     clearTimeout(this._timeoutId);
     this._sessions.length = 0;
     this._items.length = 0;
@@ -173,7 +183,7 @@ class FileBrowserModel implements IDisposable {
       newValue = this._pendingPath || this._model.path;
     }
     // Collapse requests to the same directory.
-    if (newValue === this._pendingPath) {
+    if (newValue === this._pendingPath && this._pending) {
       return this._pending;
     }
     let oldValue = this.path;
@@ -221,9 +231,11 @@ class FileBrowserModel implements IDisposable {
   download(path: string): Promise<void> {
     return this.manager.services.contents.getDownloadUrl(path).then(url => {
       let element = document.createElement('a');
+      document.body.appendChild(element);
       element.setAttribute('href', url);
       element.setAttribute('download', '');
       element.click();
+      document.body.removeChild(element);
       return void 0;
     });
   }
@@ -296,7 +308,7 @@ class FileBrowserModel implements IDisposable {
       throw new Error(msg);
     }, () => {
       if (this.isDisposed) {
-        return;
+        return Promise.reject('Disposed') as Promise<Contents.IModel>;
       }
       return this._upload(file);
     });
@@ -324,7 +336,7 @@ class FileBrowserModel implements IDisposable {
 
     return new Promise<Contents.IModel>((resolve, reject) => {
       reader.onload = (event: Event) => {
-        let model: Contents.IModel = {
+        let model: Partial<Contents.IModel> = {
           type: type,
           format,
           name,
@@ -352,6 +364,7 @@ class FileBrowserModel implements IDisposable {
       name: contents.name,
       path: contents.path,
       type: contents.type,
+      content: undefined,
       writable: contents.writable,
       created: contents.created,
       last_modified: contents.last_modified,
@@ -433,8 +446,8 @@ class FileBrowserModel implements IDisposable {
   private _model: Contents.IModel;
   private _pathChanged = new Signal<this, IChangedArgs<string>>(this);
   private _paths = new Set<string>();
-  private _pending: Promise<void> = null;
-  private _pendingPath: string = null;
+  private _pending: Promise<void> | null = null;
+  private _pendingPath: string | null = null;
   private _refreshed = new Signal<this, void>(this);
   private _lastRefresh = -1;
   private _requested = false;
@@ -442,6 +455,7 @@ class FileBrowserModel implements IDisposable {
   private _state: IStateDB | null = null;
   private _timeoutId = -1;
   private _driveName: string;
+  private _isDisposed = false;
 }
 
 

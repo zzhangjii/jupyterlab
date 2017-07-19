@@ -372,7 +372,7 @@ class ClientSession implements IClientSession {
   /**
    * Change the current kernel associated with the document.
    */
-  changeKernel(options: Kernel.IModel): Promise<Kernel.IKernelConnection> {
+  changeKernel(options: Partial<Kernel.IModel>): Promise<Kernel.IKernelConnection> {
     return this.ready.then(() => {
       if (this.isDisposed) {
         return;
@@ -561,7 +561,7 @@ class ClientSession implements IClientSession {
   /**
    * Change the kernel.
    */
-  private _changeKernel(options: Kernel.IModel): Promise<Kernel.IKernelConnection> {
+  private _changeKernel(options: Partial<Kernel.IModel>): Promise<Kernel.IKernelConnection> {
     if (this.isDisposed) {
       return Promise.resolve(void 0);
     }
@@ -594,9 +594,9 @@ class ClientSession implements IClientSession {
   /**
    * Start a session and set up its signals.
    */
-  private _startSession(model: Kernel.IModel): Promise<Kernel.IKernelConnection> {
+  private _startSession(model: Partial<Kernel.IModel>): Promise<Kernel.IKernelConnection> {
     if (this.isDisposed) {
-      return Promise.resolve(void 0);
+      return Promise.reject('Session is disposed.');
     }
     return this.manager.startNew({
       path: this._path,
@@ -604,8 +604,12 @@ class ClientSession implements IClientSession {
       name: this._name,
       kernelName: model ? model.name : null,
       kernelId: model ? model.id : null
-    }).then(session => this._handleNewSession(session))
-    .catch(err => this._handleSessionError(err));
+    }).then(session => {
+      return this._handleNewSession(session);
+    }).catch(err => {
+      this._handleSessionError(err);
+      return this._session.kernel;
+    });
   }
 
   /**

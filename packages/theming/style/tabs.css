@@ -91,6 +91,7 @@
 
 /* This is the left tab bar current tab: only 1 exists. */
 .p-TabBar-tab.p-mod-current {
+  color: var(--jp-ui-font-color0);
   background: var(--jp-layout-color0);
 }
 
@@ -147,7 +148,7 @@
   width: 14px;
   background-position: left center;
   background-repeat: no-repeat;
-  margin-right: 2px;
+  margin-right: 4px;
 }
 
 .p-DockPanel-tabBar .p-TabBar-tab.p-mod-current .p-TabBar-tabIcon {

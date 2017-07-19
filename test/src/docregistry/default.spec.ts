@@ -4,23 +4,54 @@
 import expect = require('expect.js');
 
 import {
-  Widget
+  Message
+} from '@phosphor/messaging';
+
+import {
+  PanelLayout, Widget
 } from '@phosphor/widgets';
 
 import {
   ABCWidgetFactory, Base64ModelFactory, DocumentModel,
-  DocumentRegistry, TextModelFactory, Context
+  DocumentRegistry, TextModelFactory, Context,
+  MimeDocument, MimeDocumentFactory
 } from '@jupyterlab/docregistry';
 
 import {
-  createFileContext
+  createFileContext, defaultRenderMime
 } from '../utils';
 
 
-class WidgetFactory extends ABCWidgetFactory<Widget, DocumentRegistry.IModel> {
+const RENDERMIME = defaultRenderMime();
 
-  createNewWidget(context: DocumentRegistry.Context): Widget {
-    return new Widget();
+
+class LogRenderer extends MimeDocument {
+  methods: string[] = [];
+
+  protected onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    this.methods.push('onAfterAttach');
+  }
+
+  protected onUpdateRequest(msg: Message): void {
+    super.onUpdateRequest(msg);
+    this.methods.push('onUpdateRequest');
+  }
+}
+
+
+class DocWidget extends Widget implements DocumentRegistry.IReadyWidget {
+  get ready(): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+}
+
+
+class WidgetFactory extends ABCWidgetFactory<DocumentRegistry.IReadyWidget, DocumentRegistry.IModel> {
+  protected createNewWidget(context: DocumentRegistry.Context): DocumentRegistry.IReadyWidget {
+    let widget = new DocWidget();
+    widget.addClass('WidgetFactory');
+    return widget;
   }
 }
 
@@ -448,7 +479,9 @@ describe('docmanager/default', () => {
 
       it('should serialize the model to JSON', () => {
         let model = new DocumentModel();
-        expect(model.toJSON()).to.be('""');
+        let data = { 'foo': 1 };
+        model.fromJSON(data);
+        expect(model.toJSON()).to.eql(data);
       });
 
     });
@@ -457,8 +490,9 @@ describe('docmanager/default', () => {
 
       it('should deserialize the model from JSON', () => {
         let model = new DocumentModel();
-        model.fromJSON('"foo"');
-        expect(model.toString()).to.be('foo');
+        let data = null;
+        model.fromJSON(data);
+        expect(model.toString()).to.be('null');
       });
 
     });
@@ -550,4 +584,61 @@ describe('docmanager/default', () => {
 
   });
 
+  describe('MimeDocumentFactory', () => {
+
+    describe('#createNew()', () => {
+
+      it('should require a context parameter', () => {
+        let widgetFactory = new MimeDocumentFactory({
+          name: 'markdown',
+          fileExtensions: ['.md'],
+          rendermime: RENDERMIME,
+          mimeType: 'text/markdown'
+        });
+        expect(widgetFactory.createNew(context)).to.be.a(MimeDocument);
+      });
+
+    });
+
+  });
+
+  describe('MimeDocument', () => {
+
+    describe('#constructor()', () => {
+
+      it('should require options', () => {
+        let widget = new MimeDocument({
+          context,
+          rendermime: RENDERMIME,
+          mimeType: 'text/markdown',
+          renderTimeout: 1000,
+          dataType: 'string'
+        });
+        expect(widget).to.be.a(MimeDocument);
+      });
+
+    });
+
+    describe('#ready', () => {
+
+      it('should resolve when the widget is ready', () => {
+        let widget = new LogRenderer({
+          context,
+          rendermime: RENDERMIME,
+          mimeType: 'text/markdown',
+          renderTimeout: 1000,
+          dataType: 'string'
+        });
+        context.save();
+        return widget.ready.then(() => {
+          let layout = widget.layout as PanelLayout;
+          expect(layout.widgets.length).to.be(2);
+        });
+      });
+
+    });
+
+  });
+
 });
+

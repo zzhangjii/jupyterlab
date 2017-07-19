@@ -23,6 +23,10 @@ import {
 } from '@phosphor/algorithm';
 
 import {
+  ElementExt
+} from '@phosphor/domutils';
+
+import {
   INotebookModel
 } from './model';
 
@@ -220,7 +224,7 @@ namespace NotebookActions {
     // Make the newly inserted cell active.
     widget.activeCellIndex = index;
     widget.deselectAll();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -246,7 +250,7 @@ namespace NotebookActions {
     // Make the newly inserted cell active.
     widget.activeCellIndex++;
     widget.deselectAll();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -276,7 +280,7 @@ namespace NotebookActions {
       }
     }
     cells.endCompoundOperation();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -306,7 +310,7 @@ namespace NotebookActions {
       }
     }
     cells.endCompoundOperation();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -340,7 +344,7 @@ namespace NotebookActions {
    * @param session - The optional client session object.
    *
    * #### Notes
-   * The last selected cell will be activated.
+   * The last selected cell will be activated, but not scrolled into view.
    * The existing selection will be cleared.
    * An execution error will prevent the remaining code cells from executing.
    * All markdown cells will be rendered.
@@ -352,7 +356,7 @@ namespace NotebookActions {
     }
     let state = Private.getState(widget);
     let promise = Private.runSelected(widget, session);
-    Private.handleRunState(widget, state);
+    Private.handleRunState(widget, state, false);
     return promise;
   }
 
@@ -365,7 +369,7 @@ namespace NotebookActions {
    *
    * #### Notes
    * The existing selection will be cleared.
-   * The cell after the last selected cell will be activated.
+   * The cell after the last selected cell will be activated and scrolled into view.
    * An execution error will prevent the remaining code cells from executing.
    * All markdown cells will be rendered.
    * If the last selected cell is the last cell, a new code cell
@@ -387,7 +391,7 @@ namespace NotebookActions {
     } else {
       widget.activeCellIndex++;
     }
-    Private.handleRunState(widget, state);
+    Private.handleRunState(widget, state, true);
     return promise;
   }
 
@@ -404,6 +408,7 @@ namespace NotebookActions {
    * The widget mode will be set to `'edit'` after running.
    * The existing selection will be cleared.
    * The cell insert can be undone.
+   * The new cell will be scrolled into view.
    */
   export
   function runAndInsert(widget: Notebook, session?: IClientSession): Promise<boolean> {
@@ -417,7 +422,7 @@ namespace NotebookActions {
     model.cells.insert(widget.activeCellIndex + 1, cell);
     widget.activeCellIndex++;
     widget.mode = 'edit';
-    Private.handleRunState(widget, state);
+    Private.handleRunState(widget, state, true);
     return promise;
   }
 
@@ -432,7 +437,7 @@ namespace NotebookActions {
    * The existing selection will be cleared.
    * An execution error will prevent the remaining code cells from executing.
    * All markdown cells will be rendered.
-   * The last cell in the notebook will be activated.
+   * The last cell in the notebook will be activated and scrolled into view.
    */
   export
   function runAll(widget: Notebook, session?: IClientSession): Promise<boolean> {
@@ -444,7 +449,7 @@ namespace NotebookActions {
       widget.select(child);
     });
     let promise = Private.runSelected(widget, session);
-    Private.handleRunState(widget, state);
+    Private.handleRunState(widget, state, true);
     return promise;
   }
 
@@ -469,7 +474,7 @@ namespace NotebookActions {
     let state = Private.getState(widget);
     widget.activeCellIndex -= 1;
     widget.deselectAll();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -493,7 +498,7 @@ namespace NotebookActions {
     let state = Private.getState(widget);
     widget.activeCellIndex += 1;
     widget.deselectAll();
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -530,7 +535,7 @@ namespace NotebookActions {
       widget.select(current);
     }
     widget.activeCellIndex -= 1;
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -567,7 +572,7 @@ namespace NotebookActions {
       widget.select(current);
     }
     widget.activeCellIndex += 1;
-    Private.handleState(widget, state);
+    Private.handleState(widget, state, true);
   }
 
   /**
@@ -702,10 +707,10 @@ namespace NotebookActions {
       return;
     }
     let state = Private.getState(widget);
-    let lineNumbers = widget.activeCell.editor.lineNumbers;
+    let lineNumbers = widget.activeCell.editor.getOption('lineNumbers');
     each(widget.widgets, child => {
       if (widget.isSelected(child)) {
-        child.editor.lineNumbers = !lineNumbers;
+        child.editor.setOption('lineNumbers', !lineNumbers);
       }
     });
     Private.handleState(widget, state);
@@ -726,9 +731,9 @@ namespace NotebookActions {
       return;
     }
     let state = Private.getState(widget);
-    let lineNumbers = widget.activeCell.editor.lineNumbers;
+    let lineNumbers = widget.activeCell.editor.getOption('lineNumbers');
     each(widget.widgets, child => {
-      child.editor.lineNumbers = !lineNumbers;
+      child.editor.setOption('lineNumbers', !lineNumbers);
     });
     Private.handleState(widget, state);
   }
@@ -753,6 +758,7 @@ namespace NotebookActions {
       let child = widget.widgets[i];
       if (widget.isSelected(child) && cell.type === 'code') {
         cell.outputs.clear();
+        (child as CodeCell).outputHidden = false;
         cell.executionCount = null;
       }
       i++;
@@ -774,10 +780,174 @@ namespace NotebookActions {
       return;
     }
     let state = Private.getState(widget);
+    let i = 0;
     each(widget.model.cells, (cell: ICodeCellModel) => {
+      let child = widget.widgets[i];
       if (cell.type === 'code') {
         cell.outputs.clear();
         cell.executionCount = null;
+        (child as CodeCell).outputHidden = false;
+      }
+      i++;
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Hide the code on selected code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function hideCode(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (widget.isSelected(cell) && cell.model.type === 'code') {
+        cell.inputHidden = true;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Show the code on selected code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function showCode(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (widget.isSelected(cell) && cell.model.type === 'code') {
+        cell.inputHidden = false;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Hide the code on all code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function hideAllCode(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (cell.model.type === 'code') {
+        cell.inputHidden = true;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Show the code on all code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function showAllCode(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (cell.model.type === 'code') {
+        cell.inputHidden = false;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Hide the output on selected code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function hideOutput(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (widget.isSelected(cell) && cell.model.type === 'code') {
+        (cell as CodeCell).inputHidden = true;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Show the output on selected code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function showOutput(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (widget.isSelected(cell) && cell.model.type === 'code') {
+        (cell as CodeCell).inputHidden = false;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Hide the output on all code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function hideAllOutputs(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (cell.model.type === 'code') {
+        (cell as CodeCell).outputHidden = true;
+      }
+    });
+    Private.handleState(widget, state);
+  }
+
+  /**
+   * Show the output on all code cells.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function showAllOutputs(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let state = Private.getState(widget);
+    let cells = widget.widgets;
+    each(cells, (cell: Cell) => {
+      if (cell.model.type === 'code') {
+        (cell as CodeCell).outputHidden = false;
       }
     });
     Private.handleState(widget, state);
@@ -846,8 +1016,10 @@ namespace NotebookActions {
         buttons: [Dialog.okButton()]
       }).then(() => void 0);
     }
+    let body = document.createElement('div');
+    body.innerHTML = TRUST_MESSAGE;
     return showDialog({
-      body: TRUST_MESSAGE,
+      body,
       title: 'Trust this notebook?',
       buttons: [Dialog.cancelButton(), Dialog.warnButton()]
     }).then(result => {
@@ -897,9 +1069,12 @@ namespace Private {
    * Handle the state of a widget after running an action.
    */
   export
-  function handleState(widget: Notebook, state: IState): void {
+  function handleState(widget: Notebook, state: IState, scrollIfNeeded=false): void {
     if (state.wasFocused || widget.mode === 'edit') {
       widget.activate();
+    }
+    if (scrollIfNeeded) {
+      ElementExt.scrollIntoViewIfNeeded(widget.node, widget.activeCell.node);
     }
   }
 
@@ -907,13 +1082,15 @@ namespace Private {
    * Handle the state of a widget after running a run action.
    */
   export
-  function handleRunState(widget: Notebook, state: IState): void {
+  function handleRunState(widget: Notebook, state: IState, scroll = false): void {
     if (state.wasFocused || widget.mode === 'edit') {
       widget.activate();
     }
-    // Scroll to the top of the previous active cell output.
-    let er = state.activeCell.inputArea.node.getBoundingClientRect();
-    widget.scrollToPosition(er.bottom);
+    if (scroll) {
+      // Scroll to the top of the previous active cell output.
+      let er = state.activeCell.inputArea.node.getBoundingClientRect();
+      widget.scrollToPosition(er.bottom);
+    }
   }
 
   /**
@@ -923,11 +1100,14 @@ namespace Private {
   function cloneCell(model: INotebookModel, cell: ICellModel): ICellModel {
     switch (cell.type) {
     case 'code':
-      return model.contentFactory.createCodeCell(cell.toJSON());
+      // TODO why isnt modeldb or id passed here?
+      return model.contentFactory.createCodeCell({ cell: cell.toJSON() });
     case 'markdown':
-      return model.contentFactory.createMarkdownCell(cell.toJSON());
+      // TODO why isnt modeldb or id passed here?
+      return model.contentFactory.createMarkdownCell({ cell: cell.toJSON() });
     default:
-      return model.contentFactory.createRawCell(cell.toJSON());
+      // TODO why isnt modeldb or id passed here?
+      return model.contentFactory.createRawCell({ cell: cell.toJSON() });
     }
   }
 
@@ -973,10 +1153,10 @@ namespace Private {
    * Run a cell.
    */
   function runCell(parent: Notebook, child: Cell, session?: IClientSession): Promise<boolean> {
-
     switch (child.model.type) {
     case 'markdown':
       (child as MarkdownCell).rendered = true;
+      child.inputHidden = false;
       break;
     case 'code':
       if (session) {

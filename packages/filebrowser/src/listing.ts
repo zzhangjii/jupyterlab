@@ -124,7 +124,7 @@ const MODIFIED_ID_CLASS = 'jp-id-modified';
 const FILE_TYPE_CLASS = 'jp-FileIcon';
 
 /**
- * The mime type for a contents drag object.
+ * The mime type for a con tents drag object.
  */
 const CONTENTS_MIME = 'application/x-jupyter-icontents';
 
@@ -141,9 +141,52 @@ const SELECTED_CLASS = 'jp-mod-selected';
 /**
  * The class name added to a material icon content item.
  */
-const FOLDER_MATERIAL_ICON_CLASS = 'jp-OpenFolderIcon';
-const NOTEBOOK_MATERIAL_ICON_CLASS = 'jp-NotebookIcon';
 const MATERIAL_ICON_CLASS = 'jp-MaterialIcon';
+
+/**
+ * The class name added to a directory file browser item.
+ */
+const FOLDER_MATERIAL_ICON_CLASS = 'jp-OpenFolderIcon';
+
+/**
+ * The class name added to a notebook file browser item.
+ */
+const NOTEBOOK_MATERIAL_ICON_CLASS = 'jp-NotebookIcon';
+
+/**
+ * The class name added to a markdown file browser item.
+ */
+const MARKDOWN_ICON_CLASS = 'jp-MarkdownIcon';
+
+/**
+ * The class name added to a python file browser item.
+ */
+const PYTHON_ICON_CLASS = 'jp-PythonIcon';
+
+/**
+ * The class name added to a JSON file browser item.
+ */
+const JSON_ICON_CLASS = 'jp-JSONIcon';
+
+/**
+ * The class name added to a speadsheet file browser item.
+ */
+const SPREADSHEET_ICON_CLASS = 'jp-SpreadsheetIcon';
+
+/**
+ * The class name added to a R Kernel file browser item.
+ */
+const RKERNEL_ICON_CLASS = 'jp-RKernelIcon';
+
+/**
+ * The class name added to a YAML file browser item.
+ */
+const YAML_ICON_CLASS = 'jp-YamlIcon';
+
+/**
+ * The class added for image file browser items.
+ */
+const IMAGE_ICON_CLASS = 'jp-ImageIcon';
 
 /**
  * The class name added to drag state icons to add space between the icon and the file name
@@ -234,12 +277,9 @@ class DirListing extends Widget {
    * Dispose of the resources held by the directory listing.
    */
   dispose(): void {
-    this._model = null;
-    this._items = null;
-    this._editNode = null;
-    this._drag = null;
-    this._dragData = null;
-    this._manager = null;
+    this._items.length = 0;
+    this._sortedItems.length = 0;
+    this._clipboard.length = 0;
     super.dispose();
   }
 
@@ -348,7 +388,7 @@ class DirListing extends Widget {
   paste(): Promise<void> {
     if (!this._clipboard.length) {
       this._isCut = false;
-      return;
+      return Promise.resolve(undefined);
     }
 
     const basePath = this._model.path;
@@ -373,7 +413,9 @@ class DirListing extends Widget {
     this._clipboard.length = 0;
     this._isCut = false;
     this.removeClass(CLIPBOARD_CLASS);
-    return Promise.all(promises).catch(error => {
+    return Promise.all(promises).then(() => {
+      return undefined;
+    }).catch(error => {
       utils.showErrorMessage('Paste Error', error);
     });
   }
@@ -423,7 +465,9 @@ class DirListing extends Widget {
         promises.push(this._model.manager.copy(oldPath, basePath));
       }
     });
-    return Promise.all(promises).catch(error => {
+    return Promise.all(promises).then(() => {
+      return undefined;
+    }).catch(error => {
       utils.showErrorMessage('Duplicate file', error);
     });
   }
@@ -455,7 +499,9 @@ class DirListing extends Widget {
         promises.push(model.manager.services.sessions.shutdown(session.id));
       }
     });
-    return Promise.all(promises).catch(error => {
+    return Promise.all(promises).then(() => {
+      return undefined;
+    }).catch(error => {
       utils.showErrorMessage('Shutdown kernel', error);
     });
   }
@@ -557,12 +603,13 @@ class DirListing extends Widget {
    *
    * @returns The path to the selected file.
    */
-  pathForClick(event: MouseEvent): string {
+  pathForClick(event: MouseEvent): string | undefined {
     let items = this._sortedItems;
     let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
     if (index !== -1) {
       return items[index].path;
     }
+    return undefined;
   }
 
   /**
@@ -698,7 +745,7 @@ class DirListing extends Widget {
     // Remove any excess item nodes.
     while (nodes.length > items.length) {
       let node = nodes.pop();
-      content.removeChild(node);
+      content.removeChild(node!);
     }
 
     // Add any missing item nodes.
@@ -865,7 +912,7 @@ class DirListing extends Widget {
     event.stopPropagation();
 
     // Bail if we are the one dragging.
-    if (this._drag) {
+    if (this._drag || !this._dragData) {
       return;
     }
 
@@ -1071,7 +1118,7 @@ class DirListing extends Widget {
     const manager = this._manager;
 
     // Handle the items.
-    const promises: Promise<Contents.IModel>[] = [];
+    const promises: Promise<Contents.IModel | null>[] = [];
     const paths = event.mimeData.getData(CONTENTS_MIME) as string[];
     for (let path of paths) {
       let name = PathExt.basename(path);
@@ -1094,7 +1141,7 @@ class DirListing extends Widget {
     let selectedNames = Object.keys(this._selection);
     let source = this._items[index];
     let items = this._sortedItems;
-    let item: Contents.IModel = null;
+    let item: Contents.IModel | undefined;
 
     // If the source node is not selected, use just that node.
     if (!source.classList.contains(SELECTED_CLASS)) {
@@ -1103,6 +1150,10 @@ class DirListing extends Widget {
     } else if (selectedNames.length === 1) {
       let name = selectedNames[0];
       item = find(items, value => value.name === name);
+    }
+
+    if (!item) {
+      return;
     }
 
     // Create the drag image.
@@ -1122,6 +1173,9 @@ class DirListing extends Widget {
     this._drag.mimeData.setData(CONTENTS_MIME, paths);
     if (item && item.type !== 'directory') {
       this._drag.mimeData.setData(FACTORY_MIME, () => {
+        if (!item) {
+          return;
+        }
         let path = item.path;
         let widget = this._manager.findWidget(path);
         if (!widget) {
@@ -1241,8 +1295,7 @@ class DirListing extends Widget {
     this._clipboard.length = 0;
     each(this.selectedItems(), item => {
       if (item.type !== 'directory') {
-        // Store the absolute path of the item.
-        this._clipboard.push('/' + item.path);
+        this._clipboard.push(item.path);
       }
     });
     this.update();
@@ -1280,13 +1333,13 @@ class DirListing extends Widget {
     this._selectItem(index, false);
 
     return Private.doRename(nameNode, this._editNode).then(newName => {
-      if (newName === original) {
+      if (!newName || newName === original) {
         this._inRename = false;
         return original;
       }
       if (this.isDisposed) {
         this._inRename = false;
-        return;
+        return Promise.reject('Disposed') as Promise<string>;
       }
 
       const manager = this._manager;
@@ -1300,7 +1353,7 @@ class DirListing extends Widget {
       }).then(() => {
         if (this.isDisposed) {
           this._inRename = false;
-          return;
+          return Promise.reject('Disposed') as Promise<string>;
         }
         this.selectItemByName(newName);
         this._inRename = false;
@@ -1354,9 +1407,14 @@ class DirListing extends Widget {
    * Handle a `fileChanged` signal from the model.
    */
   private _onFileChanged(sender: FileBrowserModel, args: Contents.IChangedArgs) {
-    if (args.type === 'new') {
-      this.selectItemByName(args.newValue.name).then(() => {
-        if (!this.isDisposed && args.newValue === 'directory') {
+    let newValue = args.newValue;
+    if (!newValue) {
+      return;
+    }
+    let name = args.newValue.name;
+    if (args.type === 'new' && name) {
+      this.selectItemByName(name).then(() => {
+        if (!this.isDisposed && newValue.type === 'directory') {
           this._doRename();
         }
       });
@@ -1375,23 +1433,23 @@ class DirListing extends Widget {
     this.selectItemByName(basename);
   }
 
-  private _model: FileBrowserModel = null;
-  private _editNode: HTMLInputElement = null;
+  private _model: FileBrowserModel;
+  private _editNode: HTMLInputElement;
   private _items: HTMLElement[] = [];
   private _sortedItems: Contents.IModel[] = [];
   private _sortState: DirListing.ISortState = { direction: 'ascending', key: 'name' };
-  private _drag: Drag = null;
-  private _dragData: { pressX: number, pressY: number, index: number } = null;
+  private _drag: Drag | null = null;
+  private _dragData: { pressX: number, pressY: number, index: number } | null = null;
   private _selectTimer = -1;
   private _noSelectTimer = -1;
   private _isCut = false;
   private _prevPath = '';
   private _clipboard: string[] = [];
-  private _manager: IDocumentManager = null;
+  private _manager: IDocumentManager;
   private _softSelection = '';
   private _inContext = false;
   private _selection: { [key: string]: boolean; } = Object.create(null);
-  private _renderer: DirListing.IRenderer = null;
+  private _renderer: DirListing.IRenderer;
   private _searchPrefix: string = '';
   private _searchPrefixTimer = -1;
   private _inRename = false;
@@ -1584,7 +1642,7 @@ namespace DirListing {
         name.classList.remove(DESCENDING_CLASS);
         return state;
       }
-      return void 0;
+      return state;
     }
 
     /**
@@ -1606,6 +1664,44 @@ namespace DirListing {
       return node;
     }
 
+    parseFileExtension(path: string): string {
+      var fileExtension = PathExt.extname(path).toLocaleLowerCase();
+      switch (fileExtension) {
+        case '.md':
+          return MARKDOWN_ICON_CLASS;
+        case '.py':
+          return PYTHON_ICON_CLASS;
+        case '.json':
+          return JSON_ICON_CLASS;
+        case '.csv':
+          return SPREADSHEET_ICON_CLASS;
+        case '.xls':
+          return SPREADSHEET_ICON_CLASS;
+        case '.r':
+          return RKERNEL_ICON_CLASS;
+        case '.yml':
+          return YAML_ICON_CLASS;
+        case '.yaml':
+          return YAML_ICON_CLASS;
+        case '.svg':
+          return IMAGE_ICON_CLASS;
+        case '.tiff':
+          return IMAGE_ICON_CLASS;
+        case '.jpeg':
+          return IMAGE_ICON_CLASS;
+        case '.jpg':
+          return IMAGE_ICON_CLASS;
+        case '.gif':
+          return IMAGE_ICON_CLASS;
+        case '.png':
+          return IMAGE_ICON_CLASS;
+        case '.raw':
+          return IMAGE_ICON_CLASS;
+        default:
+          return FILE_TYPE_CLASS;
+      }
+    }
+
     /**
      * Update an item node to reflect the current state of a model.
      *
@@ -1625,6 +1721,9 @@ namespace DirListing {
         break;
       case 'notebook':
         icon.classList.add(NOTEBOOK_MATERIAL_ICON_CLASS);
+        break;
+      case 'file':
+        icon.classList.add(this.parseFileExtension(model.path));
         break;
       default:
         icon.classList.add(MATERIAL_ICON_CLASS);
@@ -1680,6 +1779,9 @@ namespace DirListing {
             break;
           case 'notebook':
             iconNode.className = `${MATERIAL_ICON_CLASS} ${NOTEBOOK_MATERIAL_ICON_CLASS} ${DRAG_ICON_CLASS}`;
+            break;
+          case 'file':
+            iconNode.className = `${MATERIAL_ICON_CLASS} ${DRAG_ICON_CLASS} ` + this.parseFileExtension(model.path);
             break;
           default:
             iconNode.className = `${MATERIAL_ICON_CLASS} ${FILE_TYPE_CLASS} ${DRAG_ICON_CLASS}`;

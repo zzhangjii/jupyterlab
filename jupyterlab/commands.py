@@ -17,7 +17,7 @@ from subprocess import check_output, CalledProcessError, STDOUT
 import shutil
 import sys
 import tarfile
-from jupyter_core.paths import ENV_JUPYTER_PATH
+from jupyter_core.paths import ENV_JUPYTER_PATH, jupyter_config_path
 from notebook.nbextensions import (
     GREEN_ENABLED, GREEN_OK, RED_DISABLED, RED_X
 )
@@ -43,6 +43,16 @@ def get_app_dir(app_dir=None):
     app_dir = app_dir or os.environ.get('JUPYTERLAB_DIR')
     app_dir = app_dir or pjoin(ENV_JUPYTER_PATH[0], 'lab')
     return os.path.realpath(app_dir)
+
+
+def get_user_settings_dir():
+    """Get the configured JupyterLab app directory.
+    """
+    settings_dir = os.environ.get('JUPYTERLAB_SETTINGS_DIR')
+    settings_dir = settings_dir or pjoin(
+        jupyter_config_path()[0], 'lab', 'user-settings'
+    )
+    return os.path.realpath(settings_dir)
 
 
 def run(cmd, **kwargs):
@@ -77,7 +87,7 @@ def install_extension(extension, app_dir=None, logger=None):
 
     # Check for a core extensions here.
     data = _get_core_data()
-    if extension in data['jupyterlab']['extensions']:
+    if extension in _get_core_extensions():
         config = _get_build_config(app_dir)
         uninstalled = config.get('uninstalled_core_extensions', [])
         if extension in uninstalled:
@@ -123,9 +133,18 @@ def install_extension(extension, app_dir=None, logger=None):
     shutil.move(pjoin(target, fname), pjoin(app_dir, 'extensions'))
     shutil.rmtree(target)
 
-    staging = pjoin(app_dir, 'staging')
-    run(['npm', 'install', pjoin(app_dir, 'extensions', fname)],
-        cwd=staging, logger=logger)
+    # Remove any existing package from staging/node_modules
+    target = pjoin(app_dir, 'staging', 'node_modules', data['name'])
+    target = target.replace('/', os.sep)
+    if os.path.exists(target):
+        shutil.rmtree(target)
+
+    # Handle any schemas.
+    schema_data = data['jupyterlab'].get('schema_data', dict())
+    for (key, value) in schema_data.items():
+        path = pjoin(app_dir, 'schemas', key + '.json')
+        with open(path, 'w') as fid:
+            fid.write(value)
 
 
 def link_package(path, app_dir=None, logger=None):
@@ -149,8 +168,8 @@ def link_package(path, app_dir=None, logger=None):
         data = json.load(fid)
 
     # Check for a core extensions here.
-    core_data = _get_core_data()
-    if data['name'] in core_data['jupyterlab']['extensions']:
+    core_extensions = _get_core_extensions()
+    if data['name'] in core_extensions:
         raise ValueError('Cannot link a core extension')
 
     is_extension = _is_extension(data)
@@ -219,6 +238,15 @@ def disable_extension(extension, app_dir=None, logger=None):
     _toggle_extension(extension, True, app_dir, logger)
 
 
+def check_node():
+    """Check for the existence of node and whether it is the right version.
+    """
+    try:
+        run(['node', 'node-version-check.js'], cwd=here)
+    except Exception:
+        raise ValueError('`node` version 5+ is required, see extensions in README')
+
+
 def should_build(app_dir=None, logger=None):
     """Determine whether JupyterLab should be built.
 
@@ -260,6 +288,11 @@ def should_build(app_dir=None, logger=None):
     if set(staging_exts) != set(data['jupyterlab']['extensions']):
         return True, 'Installed extensions changed'
 
+    staging_mime_exts = staging_data['jupyterlab']['mimeExtensions']
+
+    if set(staging_mime_exts) != set(data['jupyterlab']['mimeExtensions']):
+        return True, 'Installed extensions changed'
+
     deps = data.get('dependencies', dict())
 
     # Look for mismatched extension paths.
@@ -273,7 +306,12 @@ def should_build(app_dir=None, logger=None):
             path = path.replace('file:', '')
             path = os.path.abspath(pjoin(app_dir, 'staging', path))
 
-        if path != staging_data['dependencies'][name]:
+        staging_path = staging_data['dependencies'][name]
+        if sys.platform == 'win32':
+            path = path.lower()
+            staging_path = staging_path.lower()
+
+        if path != staging_path:
             return True, 'Installed extensions changed'
 
     return False, ''
@@ -302,7 +340,7 @@ def uninstall_extension(name, app_dir=None, logger=None):
         raise ValueError('Cannot install packages in core app')
     # Allow for uninstalled core extensions here.
     data = _get_core_data()
-    if name in data['jupyterlab']['extensions']:
+    if name in _get_core_extensions():
         logger.info('Uninstalling core extension %s' % name)
         config = _get_build_config(app_dir)
         uninstalled = config.get('uninstalled_core_extensions', [])
@@ -429,6 +467,7 @@ def clean(app_dir=None):
 def build(app_dir=None, name=None, version=None, logger=None):
     """Build the JupyterLab application."""
     # Set up the build directory.
+    check_node()
     logger = logger or logging
     app_dir = get_app_dir(app_dir)
     if app_dir == here:
@@ -437,12 +476,23 @@ def build(app_dir=None, name=None, version=None, logger=None):
     _ensure_package(app_dir, name=name, version=version, logger=logger)
     staging = pjoin(app_dir, 'staging')
 
+    extensions = _get_extensions(app_dir)
+
+    # Install the linked packages.
+    for (name, path) in _get_linked_packages(app_dir, logger=logger).items():
+        # Handle linked extensions.
+        if name in extensions:
+            install_extension(path, app_dir)
+        # Handle linked packages that are not extensions.
+        else:
+            # Remove any existing package from staging/node_modules
+            target = pjoin(app_dir, 'staging', 'node_modules', name)
+            target = target.replace('/', os.sep)
+            if os.path.exists(target):
+                shutil.rmtree(target)
+
     # Make sure packages are installed.
     run(['npm', 'install'], cwd=staging, logger=logger)
-
-    # Install the linked extensions.
-    for path in _get_linked_packages(app_dir, logger=logger).values():
-        install_extension(path, app_dir)
 
     # Build the app.
     run(['npm', 'run', 'build'], cwd=staging, logger=logger)
@@ -549,6 +599,7 @@ def _test_overlap(spec1, spec2):
         gx(y2, x1, True) and lx(y2, x2, True)
     )
 
+
 def _format_compatibility_errors(name, version, errors):
     """Format a message for compatibility errors.
     """
@@ -625,11 +676,13 @@ def _ensure_package(app_dir, name=None, version=None, logger=None):
 
     # Look for mismatched version.
     pkg_path = pjoin(staging, 'package.json')
+    version_updated = False
     if os.path.exists(pkg_path):
         with open(pkg_path) as fid:
             data = json.load(fid)
         if data['jupyterlab'].get('version', '') != __version__:
             shutil.rmtree(staging)
+            version_updated = True
 
     if not os.path.exists(staging):
         os.makedirs(staging)
@@ -651,20 +704,42 @@ def _ensure_package(app_dir, name=None, version=None, logger=None):
             logger.warn(msg + '\n')
             continue
         data['dependencies'][key] = value['path']
-        data['jupyterlab']['extensions'].append(key)
+        jlab_data = value['jupyterlab']
+        if jlab_data.get('extension', False):
+            data['jupyterlab']['extensions'].append(key)
+        else:
+            data['jupyterlab']['mimeExtensions'].append(key)
+
+    # Handle linked packages that are not extensions.
+    for (key, path) in _get_linked_packages(app_dir).items():
+        if key in extensions:
+            continue
+        data['dependencies'][key] = path
 
     for item in _get_uinstalled_core_extensions(app_dir):
-        data['jupyterlab']['extensions'].remove(item)
+        if item in data['jupyterlab']['extensions']:
+            data['jupyterlab']['extensions'].remove(item)
+        else:
+            data['jupyterlab']['mimeExtensions'].remove(item)
 
     data['jupyterlab']['name'] = name or 'JupyterLab'
     if version:
         data['jupyterlab']['version'] = version
 
-    data['scripts']['build'] = 'webpack'
-
     pkg_path = pjoin(staging, 'package.json')
     with open(pkg_path, 'w') as fid:
         json.dump(data, fid, indent=4)
+
+    # Copy any missing or outdated schema files.
+    schema_local = pjoin(here, 'schemas')
+    schema_app = pjoin(app_dir, 'schemas')
+    if not os.path.exists(schema_app):
+        os.makedirs(schema_app)
+
+    for schema in os.listdir(schema_local):
+        dest = pjoin(schema_app, schema)
+        if version_updated or not os.path.exists(dest):
+            shutil.copy(pjoin(schema_local, schema), dest)
 
 
 def _is_extension(data):
@@ -674,7 +749,9 @@ def _is_extension(data):
         return False
     if not isinstance(data['jupyterlab'], dict):
         return False
-    return data['jupyterlab'].get('extension', False)
+    is_extension = data['jupyterlab'].get('extension', False)
+    is_mime_extension = data['jupyterlab'].get('mimeExtension', False)
+    return is_extension or is_mime_extension
 
 
 def _get_uinstalled_core_extensions(app_dir):
@@ -702,7 +779,8 @@ def _get_disabled(app_dir):
 def _get_core_extensions():
     """Get the core extensions.
     """
-    return _get_core_data()['jupyterlab']['extensions']
+    data = _get_core_data()['jupyterlab']
+    return data['extensions'] + data['mimeExtensions']
 
 
 def _get_extensions(app_dir):
@@ -717,6 +795,7 @@ def _get_extensions(app_dir):
         deps = data.get('dependencies', dict())
         extensions[data['name']] = dict(path=os.path.realpath(target),
                                         version=data['version'],
+                                        jupyterlab=data['jupyterlab'],
                                         dependencies=deps)
 
     # Look in app_dir if different
@@ -729,6 +808,7 @@ def _get_extensions(app_dir):
         deps = data.get('dependencies', dict())
         extensions[data['name']] = dict(path=os.path.realpath(target),
                                         version=data['version'],
+                                        jupyterlab=data['jupyterlab'],
                                         dependencies=deps)
 
     return extensions
@@ -770,7 +850,19 @@ def _read_package(target):
     """
     tar = tarfile.open(target, "r:gz")
     f = tar.extractfile('package/package.json')
-    return json.loads(f.read().decode('utf8'))
+    data = json.loads(f.read().decode('utf8'))
+    jlab = data.get('jupyterlab', None)
+    if not jlab:
+        return data
+    schemas = jlab.get('schemas', None)
+    if not schemas:
+        return data
+    schema_data = dict()
+    for schema in schemas:
+        f = tar.extractfile('package/' + schema)
+        schema_data[schema] = f.read().decode('utf8')
+    data['jupyterlab']['schema_data'] = schema_data
+    return data
 
 
 def _normalize_path(extension):

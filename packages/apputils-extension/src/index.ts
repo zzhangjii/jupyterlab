@@ -8,13 +8,16 @@ import {
 } from '@jupyterlab/application';
 
 import {
-  CommandLinker, ICommandLinker, ICommandPalette,
-  IMainMenu, MainMenu
+  ICommandPalette, IMainMenu, MainMenu
 } from '@jupyterlab/apputils';
 
 import {
-  ISettingRegistry, IStateDB, SettingRegistry, StateDB
+  IDataConnector, ISettingRegistry, IStateDB, SettingRegistry, StateDB
 } from '@jupyterlab/coreutils';
+
+import {
+  IServiceManager, ServerConnection
+} from '@jupyterlab/services';
 
 import {
   JSONObject
@@ -34,19 +37,59 @@ import {
  */
 namespace CommandIDs {
   export
-  const clearStateDB = 'statedb:clear';
+  const clearStateDB = 'apputils:clear-statedb';
 };
 
 
 /**
- * The default commmand linker provider.
+ * Convert an API `XMLHTTPRequest` error to a simple error.
  */
-const linkerPlugin: JupyterLabPlugin<ICommandLinker> = {
-  id: 'jupyter.services.command-linker',
-  provides: ICommandLinker,
-  activate: (app: JupyterLab) => new CommandLinker({ commands: app.commands }),
-  autoStart: true
-};
+function apiError(id: string, xhr: XMLHttpRequest): Error {
+  let message: string;
+
+  try {
+    message = JSON.parse(xhr.response).message;
+  } catch (error) {
+    message = `Error accessing ${id} HTTP ${xhr.status} ${xhr.statusText}`;
+  }
+
+  return new Error(message);
+}
+
+
+/**
+ * Create a data connector to access plugin settings.
+ */
+function newConnector(manager: IServiceManager): IDataConnector<ISettingRegistry.IPlugin, JSONObject> {
+  return {
+    /**
+     * Retrieve a saved bundle from the data connector.
+     */
+    fetch(id: string): Promise<ISettingRegistry.IPlugin> {
+      return manager.settings.fetch(id).catch(reason => {
+        throw apiError(id, (reason as ServerConnection.IError).xhr);
+      });
+    },
+
+    /**
+     * Remove a value from the data connector.
+     */
+    remove(): Promise<void> {
+      const message = 'Removing setting resources is not supported.';
+
+      return Promise.reject(new Error(message));
+    },
+
+    /**
+     * Save the user setting data in the data connector.
+     */
+    save(id: string, user: JSONObject): Promise<void> {
+      return manager.settings.save(id, user).catch(reason => {
+        throw apiError(id, (reason as ServerConnection.IError).xhr);
+      });
+    }
+  };
+}
 
 
 /**
@@ -60,7 +103,8 @@ const mainMenuPlugin: JupyterLabPlugin<IMainMenu> = {
     menu.id = 'jp-MainMenu';
 
     let logo = new Widget();
-    logo.node.className = 'jp-MainAreaPortraitIcon jp-JupyterIcon';
+    logo.addClass('jp-MainAreaPortraitIcon');
+    logo.addClass('jp-JupyterIcon');
     logo.id = 'jp-MainLogo';
 
     app.shell.addToTopArea(logo);
@@ -88,9 +132,12 @@ const palettePlugin: JupyterLabPlugin<ICommandPalette> = {
  */
 const settingPlugin: JupyterLabPlugin<ISettingRegistry> = {
   id: 'jupyter.services.setting-registry',
-  activate: () => new SettingRegistry(),
+  activate: (app: JupyterLab, services: IServiceManager): ISettingRegistry => {
+    return new SettingRegistry({ connector: newConnector(services) });
+  },
   autoStart: true,
-  provides: ISettingRegistry
+  provides: ISettingRegistry,
+  requires: [IServiceManager]
 };
 
 
@@ -102,16 +149,17 @@ const stateDBPlugin: JupyterLabPlugin<IStateDB> = {
   autoStart: true,
   provides: IStateDB,
   activate: (app: JupyterLab) => {
-    let state = new StateDB({ namespace: app.info.namespace });
-    let version = app.info.version;
-    let key = 'statedb:version';
-    let fetch = state.fetch(key);
-    let save = () => state.save(key, { version });
-    let reset = () => state.clear().then(save);
-    let check = (value: JSONObject) => {
+    const state = new StateDB({ namespace: app.info.namespace });
+    const version = app.info.version;
+    const key = 'statedb:version';
+    const fetch = state.fetch(key);
+    const save = () => state.save(key, { version });
+    const reset = () => state.clear().then(save);
+    const check = (value: JSONObject) => {
       let old = value && value['version'];
       if (!old || old !== version) {
-        console.log(`Upgraded: ${old || 'unknown'} to ${version}; Resetting DB.`);
+        const previous = old || 'unknown';
+        console.log(`Upgraded: ${previous} to ${version}; Resetting DB.`);
         return reset();
       }
     };
@@ -130,7 +178,6 @@ const stateDBPlugin: JupyterLabPlugin<IStateDB> = {
  * Export the plugins as default.
  */
 const plugins: JupyterLabPlugin<any>[] = [
-  linkerPlugin,
   mainMenuPlugin,
   palettePlugin,
   settingPlugin,

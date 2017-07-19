@@ -1,12 +1,14 @@
-// Copyright (c) Jupyter Development Team.
-// Distributed under the terms of the Modified BSD License.
+/*-----------------------------------------------------------------------------
+| Copyright (c) Jupyter Development Team.
+| Distributed under the terms of the Modified BSD License.
+|----------------------------------------------------------------------------*/
 
 import {
   KernelMessage
 } from '@jupyterlab/services';
 
 import {
-  JSONObject, JSONValue
+  JSONValue, PromiseDelegate
 } from '@phosphor/coreutils';
 
 import {
@@ -14,11 +16,7 @@ import {
 } from '@phosphor/messaging';
 
 import {
-  PanelLayout, Panel
-} from '@phosphor/widgets';
-
-import {
-  Widget
+  PanelLayout, Panel, Widget
 } from '@phosphor/widgets';
 
 import {
@@ -34,7 +32,7 @@ import {
 } from '@jupyterlab/codeeditor';
 
 import {
-  MimeModel, RenderMime
+  IRenderMime, MimeModel, RenderMime
 } from '@jupyterlab/rendermime';
 
 import {
@@ -51,8 +49,20 @@ import {
 } from './model';
 
 import {
+  InputCollapser, OutputCollapser
+} from './collapser';
+
+import {
   InputArea, IInputPrompt, InputPrompt
 } from './inputarea';
+
+import {
+  InputPlaceholder, OutputPlaceholder
+} from './placeholder';
+
+import {
+  CellHeader, CellFooter, ICellHeader, ICellFooter
+} from './headerfooter';
 
 
 /**
@@ -177,13 +187,17 @@ class Cell extends Widget {
     // Input
     let inputWrapper = this._inputWrapper = new Panel();
     inputWrapper.addClass(CELL_INPUT_WRAPPER_CLASS);
-    let inputCollapser = this._inputCollapser = contentFactory.createCollapser();
+    let inputCollapser = this._inputCollapser = new InputCollapser();
     inputCollapser.addClass(CELL_INPUT_COLLAPSER_CLASS);
     let input = this._input = new InputArea({model, contentFactory });
     input.addClass(CELL_INPUT_AREA_CLASS);
     inputWrapper.addWidget(inputCollapser);
     inputWrapper.addWidget(input);
     (this.layout as PanelLayout).addWidget(inputWrapper);
+
+    this._inputPlaceholder = new InputPlaceholder(() => {
+      this.inputHidden = !this.inputHidden;
+    });
 
     // Footer
     let footer = this._footer = this.contentFactory.createCellFooter();
@@ -200,7 +214,11 @@ class Cell extends Widget {
    * Get the prompt node used by the cell.
    */
   get promptNode(): HTMLElement {
-    return this._input.promptNode;
+    if (!this._inputHidden) {
+      return this._input.promptNode;
+    } else {
+      return ((this._inputPlaceholder.node as HTMLElement).firstElementChild as HTMLElement);
+    }
   }
 
   /**
@@ -246,6 +264,13 @@ class Cell extends Widget {
   }
 
   /**
+   * A promise that resolves when the widget renders for the first time.
+   */
+  get ready(): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+
+  /**
    * Set the prompt for the widget.
    */
   setPrompt(value: string): void {
@@ -253,13 +278,37 @@ class Cell extends Widget {
   }
 
   /**
-   * The view state of input being collapsed.
+   * The view state of input being hidden.
    */
-  get inputCollapsed(): boolean {
-    return this._inputCollapsed;
+  get inputHidden(): boolean {
+    return this._inputHidden;
   }
-  set inputCollapsed(value: boolean) {
-    this._inputCollapsed = value;
+  set inputHidden(value: boolean) {
+    if (this._inputHidden === value) {
+      return;
+    }
+    let layout = this._inputWrapper.layout as PanelLayout;
+    if (value) {
+      this._input.parent = null;
+      layout.addWidget(this._inputPlaceholder);
+    } else {
+      this._inputPlaceholder.parent = null;
+      layout.addWidget(this._input);
+    }
+    this._inputHidden = value;
+    this.handleInputHidden(value);
+  }
+
+  /**
+   * Handle the input being hidden.
+   *
+   * #### Notes
+   * This is called by the `inputHidden` setter so that subclasses
+   * can perform actions upon the input being hidden without accessing
+   * private state.
+   */
+  protected handleInputHidden(value: boolean): void {
+    return;
   }
 
   /**
@@ -276,6 +325,7 @@ class Cell extends Widget {
     this._footer = null;
     this._inputCollapser = null;
     this._inputWrapper = null;
+    this._inputPlaceholder = null;
     super.dispose();
   }
 
@@ -301,18 +351,19 @@ class Cell extends Widget {
       return;
     }
     // Handle read only state.
-    this.editor.readOnly = this._readOnly;
+    this.editor.setOption('readOnly', this._readOnly);
     this.toggleClass(READONLY_CLASS, this._readOnly);
   }
 
   private _readOnly = false;
-  private _inputCollapsed = false;
-  private _input: InputArea = null;
   private _model: ICellModel = null;
   private _header: ICellHeader = null;
   private _footer: ICellFooter = null;
-  private _inputCollapser: ICollapser = null;
+  private _inputHidden = false;
+  private _input: InputArea = null;
+  private _inputCollapser: InputCollapser = null;
   private _inputWrapper: Widget = null;
+  private _inputPlaceholder: InputPlaceholder = null;
 
 }
 
@@ -359,10 +410,6 @@ namespace Cell {
      */
     createCellFooter(): ICellFooter;
 
-    /**
-     * Create a new input/output collaper for the parent widget.
-     */
-    createCollapser(): ICollapser;
   }
 
   /**
@@ -401,10 +448,10 @@ namespace Cell {
     }
 
     /**
-     * Create a new input/output collapser for the parent widget.
+     * Create an input prompt.
      */
-    createCollapser(): ICollapser {
-      return new Collapser();
+    createInputPrompt(): IInputPrompt {
+      return new InputPrompt();
     }
 
     /**
@@ -419,13 +466,6 @@ namespace Cell {
      */
     createStdin(options: Stdin.IOptions): IStdin {
       return new Stdin(options);
-    }
-
-    /**
-     * Create an input prompt.
-     */
-    createInputPrompt(): IInputPrompt {
-      return new InputPrompt();
     }
 
     private _editorFactory: CodeEditor.Factory = null;
@@ -480,12 +520,12 @@ class CodeCell extends Cell {
     let model = this.model;
 
     // Code cells should not wrap lines.
-    this.editor.wordWrap = false;
+    this.editor.setOption('lineWrap', false);
 
     // Insert the output before the cell footer.
     let outputWrapper = this._outputWrapper = new Panel();
     outputWrapper.addClass(CELL_OUTPUT_WRAPPER_CLASS);
-    let outputCollapser = this._outputCollapser = contentFactory.createCollapser();
+    let outputCollapser = this._outputCollapser = new OutputCollapser();
     outputCollapser.addClass(CELL_OUTPUT_COLLAPSER_CLASS);
     let output = this._output = new OutputArea({
       model: model.outputs,
@@ -503,6 +543,10 @@ class CodeCell extends Cell {
     outputWrapper.addWidget(outputCollapser);
     outputWrapper.addWidget(output);
     (this.layout as PanelLayout).insertWidget(2, outputWrapper);
+
+    this._outputPlaceholder = new OutputPlaceholder(() => {
+      this.outputHidden = !this.outputHidden;
+    });
 
     // Modify state
     this.setPrompt(`${model.executionCount || ''}`);
@@ -525,11 +569,44 @@ class CodeCell extends Cell {
   /**
    * The view state of output being collapsed.
    */
-  get outputCollapsed(): boolean {
-    return this._outputCollapsed;
+  get outputHidden(): boolean {
+    return this._outputHidden;
   }
-  set outputCollapsed(value: boolean) {
-    this._outputCollapsed = value;
+  set outputHidden(value: boolean) {
+    if (this._outputHidden === value) {
+      return;
+    }
+    let layout = this._outputWrapper.layout as PanelLayout;
+    if (value) {
+      layout.removeWidget(this._output);
+      layout.addWidget(this._outputPlaceholder);
+      if (this.inputHidden && !this._outputWrapper.isHidden) {
+        this._outputWrapper.hide();
+      }
+    } else {
+      if (this._outputWrapper.isHidden) {
+        this._outputWrapper.show();
+      }
+      layout.removeWidget(this._outputPlaceholder);
+      layout.addWidget(this._output);
+    }
+    this._outputHidden = value;
+  }
+
+  /**
+   * Handle the input being hidden.
+   *
+   * #### Notes
+   * This method is called by the case cell implementation and is
+   * subclasses here so the code cell can watch to see when input
+   * is hidden without accessing private state.
+   */
+  protected handleInputHidden(value: boolean): void {
+    if (!value && this._outputWrapper.isHidden) {
+      this._outputWrapper.show();
+    } else if (value && !this._outputWrapper.isHidden && this._outputHidden) {
+      this._outputWrapper.hide();
+    }
   }
 
   /**
@@ -544,6 +621,7 @@ class CodeCell extends Cell {
     this._output = null;
     this._outputWrapper = null;
     this._outputCollapser = null;
+    this._outputPlaceholder = null;
     super.dispose();
   }
 
@@ -595,9 +673,10 @@ class CodeCell extends Cell {
   }
 
   private _rendermime: RenderMime = null;
-  private _outputCollapsed = false;
+  private _outputHidden = false;
   private _outputWrapper: Widget = null;
-  private _outputCollapser: ICollapser = null;
+  private _outputCollapser: OutputCollapser = null;
+  private _outputPlaceholder: OutputPlaceholder = null;
   private _output: OutputArea = null;
 }
 
@@ -637,6 +716,7 @@ namespace CodeCell {
     }
 
     model.executionCount = null;
+    cell.outputHidden = false;
     cell.setPrompt('*');
     model.trusted = true;
 
@@ -670,7 +750,6 @@ class MarkdownCell extends Cell {
     super(options);
     this.addClass(MARKDOWN_CELL_CLASS);
     this._rendermime = options.rendermime;
-    this.editor.wordWrap = true;
 
     // Throttle the rendering rate of the widget.
     this._monitor = new ActivityMonitor({
@@ -682,12 +761,23 @@ class MarkdownCell extends Cell {
         this.update();
       }
     }, this);
+
+    this._updateRenderedInput().then(() => {
+      this._ready.resolve(void 0);
+    });
   }
 
   /**
    * The model used by the widget.
    */
   readonly model: IMarkdownCellModel;
+
+  /**
+   * A promise that resolves when the widget renders for the first time.
+   */
+  get ready(): Promise<void> {
+    return this._ready.promise;
+  }
 
   /**
    * Whether the cell is rendered.
@@ -719,18 +809,6 @@ class MarkdownCell extends Cell {
     this.inputArea.showEditor();
   }
 
-  /**
-   * Dispose of the resource held by the widget.
-   */
-  dispose(): void {
-    if (this.isDisposed) {
-      return;
-    }
-    this._renderedInput = null;
-    this._rendermime = null;
-    super.dispose();
-  }
-
   /*
    * Handle `update-request` messages.
    */
@@ -748,36 +826,35 @@ class MarkdownCell extends Cell {
       this.showEditor();
     } else {
       this._updateRenderedInput();
-      this.renderInput(this._renderedInput);
+      this.renderInput(this._renderer);
     }
   }
 
   /**
    * Update the rendered input.
    */
-  private _updateRenderedInput(): void {
+  private _updateRenderedInput(): Promise<void> {
     let model = this.model;
     let text = model && model.value.text || DEFAULT_MARKDOWN_TEXT;
-    let trusted = this.model.trusted;
-    // Do not re-render if the text has not changed and the trusted
-    // has not changed.
-    if (text !== this._prevText || trusted !== this._prevTrusted) {
-      let data: JSONObject = { 'text/markdown': text };
-      let bundle = new MimeModel({ data, trusted });
-      let widget = this._rendermime.render(bundle);
-      this._renderedInput = widget || new Widget();
-      this._renderedInput.addClass(MARKDOWN_OUTPUT_CLASS);
+    // Do not re-render if the text has not changed.
+    if (text !== this._prevText) {
+      let mimeModel = new MimeModel({ data: { 'text/markdown': text }});
+      if (!this._renderer) {
+        this._renderer = this._rendermime.createRenderer('text/markdown');
+        this._renderer.addClass(MARKDOWN_OUTPUT_CLASS);
+      }
+      this._prevText = text;
+      return this._renderer.renderModel(mimeModel);
     }
-    this._prevText = text;
-    this._prevTrusted = trusted;
+    return Promise.resolve(void 0);
   }
 
   private _monitor: ActivityMonitor<any, any> = null;
-  private _rendermime: RenderMime = null;
-  private _renderedInput: Widget = null;
+  private _renderer: IRenderMime.IRenderer = null;
+  private _rendermime: RenderMime;
   private _rendered = true;
   private _prevText = '';
-  private _prevTrusted = false;
+  private _ready = new PromiseDelegate<void>();
 }
 
 
@@ -844,60 +921,5 @@ namespace RawCell {
      * The model used by the cell.
      */
     model: IRawCellModel;
-  }
-}
-
-
-/******************************************************************************
- * Cell children
- ******************************************************************************/
-
-
-/**
- * The cell header interface.
- */
-export
-interface ICellHeader extends Widget {}
-
-
-/**
- * Default implementation of the cell header is a Widget with a class
- */
-export
-class CellHeader extends Widget implements ICellHeader {
-}
-
-
-/**
- * The cell footer interface.
- */
-export
-interface ICellFooter extends Widget {}
-
-
-/**
- * Default implementation of the cell footer is a Widget with a class
- */
-export
-class CellFooter extends Widget implements ICellFooter {
-}
-
-
-/**
- * A collapser for input and output.
- *
- * This is the element that gets clicked on.
- */
-export
-interface ICollapser extends Widget {}
-
-
-/**
- * Default implementation of the collapser.
- */
-export
-class Collapser extends Widget {
-  constructor() {
-    super();
   }
 }

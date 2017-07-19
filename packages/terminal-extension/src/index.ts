@@ -54,7 +54,7 @@ namespace CommandIDs {
 /**
  * The class name for the terminal icon in the default theme.
  */
-const TERMINAL_ICON_CLASS = 'jp-ImageTerminal';
+const TERMINAL_ICON_CLASS = 'jp-TerminalIcon';
 
 
 /**
@@ -82,16 +82,16 @@ export default plugin;
  * Activate the terminal plugin.
  */
 function activate(app: JupyterLab, services: IServiceManager, mainMenu: IMainMenu, palette: ICommandPalette, restorer: ILayoutRestorer, launcher: ILauncher | null): ITerminalTracker {
-  // Bail if there are no terminals available.
-  if (!services.terminals.isAvailable()) {
-    console.log('Disabling terminals plugin because they are not available on the server');
-    return;
-  }
-
   const { commands } = app;
   const category = 'Terminal';
   const namespace = 'terminal';
   const tracker = new InstanceTracker<Terminal>({ namespace });
+
+  // Bail if there are no terminals available.
+  if (!services.terminals.isAvailable()) {
+    console.log('Disabling terminals plugin because they are not available on the server');
+    return tracker;
+  }
 
   // Handle state restoration.
   restorer.restore(tracker, {
@@ -130,6 +130,8 @@ function activate(app: JupyterLab, services: IServiceManager, mainMenu: IMainMen
   if (launcher) {
     launcher.add({
       displayName: 'Terminal',
+      category: 'Other',
+      rank: 0,
       iconClass: TERMINAL_ICON_CLASS,
       callback: () => {
         return commands.execute(CommandIDs.createNew);
@@ -186,7 +188,9 @@ function addCommands(app: JupyterLab, services: IServiceManager, tracker: Instan
     execute: args => {
       const name = args['name'] as string;
       // Check for a running terminal with the given name.
-      const widget = tracker.find(value => value.session.name === name);
+      const widget = tracker.find(value => {
+        return value.session && value.session.name === name || false;
+      });
       if (widget) {
         shell.activateById(widget.id);
       } else {
@@ -206,7 +210,11 @@ function addCommands(app: JupyterLab, services: IServiceManager, tracker: Instan
       }
       shell.activateById(current.id);
 
-      return current.refresh().then(() => { current.activate(); });
+      return current.refresh().then(() => {
+        if (current) {
+          current.activate();
+        }
+      });
     },
     isEnabled: () => tracker.currentWidget !== null
   });

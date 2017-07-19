@@ -64,7 +64,8 @@
 .jp-RenderedText pre .ansi-bright-white-bg { background-color: #A1A6B2; }
 
 
-.jp-RenderedText.jp-mod-error {
+.jp-RenderedText[data-mime-type="application/vnd.jupyter.stderr"],
+.jp-RenderedJavaScript {
   background: #fdd;
 }
 
@@ -100,17 +101,6 @@
 
 .jp-RenderedHTMLCommon em {
   font-style: italic;
-}
-
-
-.jp-RenderedHTMLCommon img.jp-mod-unconfined {
-  max-width: none;
-}
-
-
-.jp-RenderedHTMLCommon img {
-  max-width: 100%;
-  height: auto;
 }
 
 
@@ -381,16 +371,21 @@ margin-top = 14, 14, 14, 14, 8, 8
 
 
 .jp-RenderedHTMLCommon img,
-.jp-RenderedHTMLCommon svg {
+.jp-RenderedImage img,
+.jp-RenderedHTMLCommon svg,
+.jp-RenderedSVG svg {
   max-width: 100%;
   height: auto;
 }
 
 
-.jp-RenderedHTMLCommon img.unconfined,
-.jp-RenderedHTMLCommon svg.unconfined {
+.jp-RenderedHTMLCommon img.jp-mod-unconfined,
+.jp-RenderedImage img.jp-mod-unconfined,
+.jp-RenderedHTMLCommon svg.jp-mod-unconfined,
+.jp-RenderedSVG svg.jp-mod-unconfined {
   max-width: none;
 }
+
 
 .jp-RenderedHTMLCommon .alert {
   margin-bottom: initial;
@@ -410,6 +405,8 @@ margin-top = 14, 14, 14, 14, 8, 8
 
 a.jp-InternalAnchorLink {
   visibility: hidden;
+  margin-left: 8px;
+  color: var(--md-blue-800);
 }
 
 h1:hover .jp-InternalAnchorLink,
@@ -419,4 +416,14 @@ h4:hover .jp-InternalAnchorLink,
 h5:hover .jp-InternalAnchorLink,
 h6:hover .jp-InternalAnchorLink {
   visibility: visible;
+}
+
+
+
+/*-----------------------------------------------------------------------------
+| RenderedPDF
+|----------------------------------------------------------------------------*/
+
+.jp-RenderedPDF {
+  font-size: var(--jp-ui-font-size1);
 }

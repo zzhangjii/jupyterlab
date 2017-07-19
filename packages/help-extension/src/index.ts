@@ -22,7 +22,7 @@ import {
 } from '@phosphor/virtualdom';
 
 import {
-  Menu
+  Menu, PanelLayout, Widget
 } from '@phosphor/widgets';
 
 import '../style/index.css';
@@ -32,28 +32,28 @@ import '../style/index.css';
  */
 namespace CommandIDs {
   export
-  const open = 'help-jupyterlab:open';
+  const open = 'help:open';
 
   export
-  const about = 'help-jupyterlab:about';
+  const about = 'help:about';
 
   export
-  const activate = 'help-jupyterlab:activate';
+  const activate = 'help:activate';
 
   export
-  const close = 'help-jupyterlab:close';
+  const close = 'help:close';
 
   export
-  const show = 'help-jupyterlab:show';
+  const show = 'help:show';
 
   export
-  const hide = 'help-jupyterlab:hide';
+  const hide = 'help:hide';
 
   export
-  const toggle = 'help-jupyterlab:toggle';
+  const toggle = 'help:toggle';
 
   export
-  const launchClassic = 'classic-notebook:launchClassic';
+  const launchClassic = 'help:launch-classic-notebook';
 };
 
 
@@ -137,7 +137,17 @@ export default plugin;
   *
   * This is needed to clear the state restoration db when IFrames are closed.
  */
-class ClosableIFrame extends IFrame {
+class HelpWidget extends Widget {
+  /**
+   * Construct a new help widget.
+   */
+  constructor(url: string) {
+    super();
+    let layout = this.layout = new PanelLayout();
+    let iframe = new IFrame();
+    iframe.url = url;
+    layout.addWidget(iframe);
+  }
 
   /**
    * Dispose of the IFrame when closing.
@@ -161,7 +171,7 @@ function activate(app: JupyterLab, mainMenu: IMainMenu, palette: ICommandPalette
   const namespace = 'help-doc';
   const menu = createMenu();
   const { commands, shell, info} = app;
-  const tracker = new InstanceTracker<ClosableIFrame>({ namespace });
+  const tracker = new InstanceTracker<HelpWidget>({ namespace });
 
   // Handle state restoration.
   restorer.restore(tracker, {
@@ -171,15 +181,14 @@ function activate(app: JupyterLab, mainMenu: IMainMenu, palette: ICommandPalette
   });
 
   /**
-   * Create a new ClosableIFrame widget.
+   * Create a new HelpWidget widget.
    */
-  function newClosableIFrame(url: string, text: string): ClosableIFrame {
-    let iframe = new ClosableIFrame();
+  function newClosableIFrame(url: string, text: string): HelpWidget {
+    let iframe = new HelpWidget(url);
     iframe.addClass(HELP_CLASS);
     iframe.title.label = text;
     iframe.title.closable = true;
     iframe.id = `${namespace}-${++counter}`;
-    iframe.url = url;
     tracker.add(iframe);
     return iframe;
   }
@@ -200,7 +209,7 @@ function activate(app: JupyterLab, mainMenu: IMainMenu, palette: ICommandPalette
       menu.addItem({ args, command: CommandIDs.open });
     });
     menu.addItem({ type: 'separator' });
-    menu.addItem({ command: 'statedb:clear' });
+    menu.addItem({ command: 'apputils:clear-statedb' });
 
     return menu;
   }
@@ -208,23 +217,41 @@ function activate(app: JupyterLab, mainMenu: IMainMenu, palette: ICommandPalette
   commands.addCommand(CommandIDs.about, {
     label: `About ${info.name}`,
     execute: () => {
-      let previewMessage = `alpha (v${info.version})`;
-      let logo = h.span({
-        className: `jp-ImageJupyterLab jp-About-logo`
-      });
-      let subtitle = h.span(
-        {className: 'jp-About-subtitle'},
-        previewMessage
-      );
 
-      let body = VirtualDOM.realize(h.div({ className: 'jp-About' },
-        logo,
-        subtitle
+      //Create the header of the about dialog
+      let headerLogo = h.div({className: 'jp-About-header-logo'});
+      let headerWordmark = h.div({className: 'jp-About-header-wordmark'});
+      let release = 'alpha release';
+      let versionNumber = `version: ${info.version}`;
+      let versionInfo = h.span({className: 'jp-About-version-info'},
+        h.span({className: 'jp-About-release'}, release),
+        h.span({className: 'jp-About-version'}, versionNumber)
+      );
+      let title = VirtualDOM.realize(h.span({className: 'jp-About-header'},
+        headerLogo,
+        h.div({className: 'jp-About-header-info'},
+          headerWordmark,
+          versionInfo
+        )
       ));
+
+      //Create the body of the about dialog
+      let jupyterURL = 'https://jupyter.org/about.html';
+      let contributorsURL = 'https://github.com/jupyterlab/jupyterlab/graphs/contributors';
+      let externalLinks = h.span({className: 'jp-About-externalLinks'},
+        h.a({href: contributorsURL, target: '_blank', className: 'jp-Button-flat'}, "CONTRIBUTOR LIST"),
+        h.a({href: jupyterURL, target: '_blank', className: 'jp-Button-flat'}, "ABOUT PROJECT JUPYTER")
+      );
+      let copyright = h.span({className: 'jp-About-copyright'}, "© 2017 Project Jupyter");
+      let body = VirtualDOM.realize(h.div({ className: 'jp-About-body' },
+        externalLinks,
+        copyright
+      ));
+
       showDialog({
-        title: `About ${info.name}`,
+        title,
         body,
-        buttons: [Dialog.okButton()]
+        buttons: [Dialog.createButton({label: 'DISMISS', className: 'jp-About-button jp-mod-reject jp-mod-styled'})]
       });
     }
   });
@@ -256,7 +283,7 @@ function activate(app: JupyterLab, mainMenu: IMainMenu, palette: ICommandPalette
   RESOURCES.forEach(args => {
     palette.addItem({ args, command: CommandIDs.open, category });
   });
-  palette.addItem({ command: 'statedb:clear', category });
+  palette.addItem({ command: 'apputils:clear-statedb', category });
   palette.addItem({ command: CommandIDs.launchClassic, category });
 
   mainMenu.addMenu(menu);

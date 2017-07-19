@@ -2,7 +2,7 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  ICommandLinker, VDomModel, VDomRenderer
+  CommandLinker, VDomModel, VDomRenderer
 } from '@jupyterlab/apputils';
 
 import {
@@ -42,7 +42,7 @@ const SUBHEADER_CLASS = 'jp-FAQ-h2';
 /**
  * The class name added for the question mark icon from default-theme.
  */
-const QUESTIONMARK_ICON_CLASS = 'jp-QuestionMark';
+const QUESTIONMARK_ICON_CLASS = 'jp-QuestionMarkIcon';
 
 /**
  * The class named added the question mark icon.
@@ -166,11 +166,15 @@ class FaqWidget extends VDomRenderer<FaqModel> {
    * Render the faq plugin to virtual DOM nodes.
    */
   protected render(): VirtualNode[] {
+    let model = this.model;
+    if (!model) {
+      return [];
+    }
     let linker = this._linker;
-    let subheadings = this.model.subheadings;
-    let basicsQuestions = this.model.basicsQuestions;
-    let featuresQuestions = this.model.featuresQuestions;
-    let developerQuestions = this.model.developerQuestions;
+    let subheadings = model.subheadings;
+    let basicsQuestions = model.basicsQuestions;
+    let featuresQuestions = model.featuresQuestions;
+    let developerQuestions = model.developerQuestions;
 
     // Create Frequently Asked Questions Header Section.
     let faqHeader =
@@ -179,7 +183,7 @@ class FaqWidget extends VDomRenderer<FaqModel> {
         className: QUESTIONMARK_ICON_CLASS + ' ' + QUESTIONMARK_CLASS
       }),
       h.h1({ className: HEADER_CLASS },
-        h.span({ className: TITLE_CLASS }, this.model.title)
+        h.span({ className: TITLE_CLASS }, model.title)
       )
     );
 
@@ -260,7 +264,7 @@ class FaqWidget extends VDomRenderer<FaqModel> {
           'Check out the JupyterLab tour ',
           h.a({
             className: ANCHOR_CLASS,
-            dataset: linker.populateVNodeDataset('about-jupyterlab:open', null)
+            dataset: linker.populateVNodeDataset('about-jupyterlab:open')
           }, 'here')
         )
       ),
@@ -383,7 +387,7 @@ class FaqWidget extends VDomRenderer<FaqModel> {
     this.dispose();
   }
 
-  private _linker: ICommandLinker;
+  private _linker: CommandLinker;
 }
 
 
@@ -400,6 +404,6 @@ namespace FaqWidget {
     /**
      * A command linker instance.
      */
-    linker: ICommandLinker;
+    linker: CommandLinker;
   }
 }
